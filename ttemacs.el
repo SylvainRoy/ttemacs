@@ -88,12 +88,12 @@
   (ttemacs-log (format ">> Received:\n%s\n" msg)))
 
 (defun transport-encoder (data)
-  (let ((protocol (cdr (assoc 'protocol configuration))))
+  (let ((protocol (cdr (assoc 'protocol tt-config))))
     (cond ((string= protocol 'erplv2) (erplv2-encoder data))
 	  (t (error "protocol %s not supported" protocol)))))
 
 (defun transport-decoder (data)
-  (let ((protocol (cdr (assoc 'protocol configuration))))
+  (let ((protocol (cdr (assoc 'protocol tt-config))))
     (cond ((string= protocol 'erplv2) (erplv2-decoder data))
 	  (t (error "protocol %s not supported" protocol)))))
 
