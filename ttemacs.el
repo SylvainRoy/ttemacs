@@ -11,14 +11,17 @@
 ;;
 
 (defvar tt-config
-  '((syntax . iatb)
-    (protocol . erplv2)
+  '((protocol . erplv2)
     (ip . "127.0.0.1")
     (port . 40000))
   "The configuration used by tt-emacs to send messages.")
 
 (defun tt-send (query)
   "Send a message and save the response in the global var 'reply."
+  (setq query (when (string-match "[ \t\n]*$" query)
+		(replace-match "" nil nil query)))
+  (setq query (when (string-match "^[ \t\n]*" query)
+		(replace-match "" nil nil query)))
   (ttemacs-log (format ">> Sending message to %s:%s (%s):\n%s\n"
 		       (cdr (assoc 'ip tt-config))
 		       (cdr (assoc 'port tt-config))
@@ -49,12 +52,8 @@
 
 (defun unpretty-print (string)
   "Removes '\n&', change [+:'*] by ad-hoc separator based on syntax."
-  (setq string (replace-regexp-in-string "^[ \t]*" "" string t nil 0 0))
-  (setq string (replace-regexp-in-string "[ \t\x0a]*$" "" string t nil 0 0))
-  (setq string (replace-regexp-in-string "'\\(&\x0a?[ \t]*\\)[A-Z][A-Z][A-Z]\\+"
-					 "" string t nil 1 0))
-  (setq string (replace-regexp-in-string "'\\(&\x0a?[ \t]*\\)$"
-					 "" string t nil 1 0))
+  (setq string (replace-regexp-in-string "^[ \t\x0a]*" "" string t nil 0 0))
+  (setq string (replace-regexp-in-string "'\\(&?[ \t\x0a]*\\)" "" string t nil 1 0))
   (unless (numberp (string-match "^UNB\\+IATA" string))
     (setq string (replace-regexp-in-string "'" "\x1c" string t nil 0 0))
     (setq string (replace-regexp-in-string "\\+" "\x1d" string t nil 0 0))
