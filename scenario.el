@@ -1,7 +1,10 @@
 (load-file "./ttemacs.el")
 
+(ttemacs-clean-log)
+
 (setq tt-config
-      '((protocol . erplv2)
+      '((syntax . iatb)
+	(protocol . erplv2)
 	(ip . "127.0.0.1")
 	(port . 40000)))
 

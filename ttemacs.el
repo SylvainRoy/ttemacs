@@ -1,4 +1,6 @@
-;; Elisp library to send and receive Edifact message from emacs.
+;;; ttemacs.el ---Send and receive Edifact messages from emacs.
+
+;; Author: Sylvain Roy <sroy@amadeus.com>
 
 (require 'bindat)
 (require 'network-stream)
@@ -9,7 +11,8 @@
 ;;
 
 (defvar tt-config
-  '((protocol . erplv2)
+  '((syntax . iatb)
+    (protocol . erplv2)
     (ip . "127.0.0.1")
     (port . 40000))
   "The configuration used by tt-emacs to send messages.")
@@ -22,11 +25,91 @@
 		       (cdr (assoc 'protocol tt-config))
 		       query))
   (setq reply nil)
-  (transport-send query))
+  (session-send query))
+
+(defun tt-reply-handler (msg)
+  "Called upon reception of the reply."
+  (ttemacs-log (format ">> Received:\n%s\n" msg))
+  (setq reply msg))
 
 
 ;;
-;; ERPLv2 Protocol
+;; Session layer
+;;
+
+(defun session-send (data)
+  "Send 'data' to ip:port using.
+   Then, calls session-reply-handler with the decoded reply."
+  (setq data (unpretty-print data))
+  (transport-send data))
+
+(defun session-reply-handler (msg)
+  "Callback to handle message received at session level."
+  (tt-reply-handler (pretty-print msg)))
+
+(defun unpretty-print (string)
+  "Removes '\n&', change [+:'*] by ad-hoc separator based on syntax."
+  (setq string (replace-regexp-in-string "^[ \t]*" "" string t nil 0 0))
+  (setq string (replace-regexp-in-string "[ \t\x0a]*$" "" string t nil 0 0))
+  (setq string (replace-regexp-in-string "'\\(&\x0a?[ \t]*\\)[A-Z][A-Z][A-Z]\\+"
+					 "" string t nil 1 0))
+  (setq string (replace-regexp-in-string "'\\(&\x0a?[ \t]*\\)$"
+					 "" string t nil 1 0))
+  (unless (numberp (string-match "^UNB\\+IATA" string))
+    (setq string (replace-regexp-in-string "'" "\x1c" string t nil 0 0))
+    (setq string (replace-regexp-in-string "\\+" "\x1d" string t nil 0 0))
+    (setq string (replace-regexp-in-string ":" "\x1f" string t nil 0 0))
+    (setq string (replace-regexp-in-string "\\*" "\x19" string t nil 0 0)))
+  string)
+
+(defun pretty-print (string)
+  "Adds newline and printable separator."
+  (setq string (replace-regexp-in-string "\x1c" "'" string t nil 0 0))
+  (setq string (replace-regexp-in-string "\x1d" "+" string t nil 0 0))
+  (setq string (replace-regexp-in-string "\x1f" ":" string t nil 0 0))
+  (setq string (replace-regexp-in-string "\x19" "*" string t nil 0 0))
+  (setq string (replace-regexp-in-string "'" "'&\x0a" string t nil 0 0)))
+
+
+;;
+;; Transport layer
+;;
+
+(defun transport-send (data)
+  "Send 'data' to ip:port using ad-hoc transport encoder/decoder.
+   Then, calls transport-reply-handler with the decoded reply."
+  (setq buffer "")
+  (defun handle-output-flow (process output)
+    "Aggregate output data, decode them and call handler."
+    (setq buffer (concat buffer output))
+    (condition-case nil
+	(transport-reply-handler (transport-decoder (string-make-unibyte buffer)))
+      (error nil)))
+  (let ((ip (cdr (assoc 'ip tt-config)))
+	(port (cdr (assoc 'port tt-config))))
+    (setq p (open-network-stream "ttemacs-process" "*Messages*" ip port))
+    (set-process-filter p 'handle-output-flow)
+    (process-send-string p (transport-encoder data))))
+
+(defun transport-reply-handler (msg)
+  "Callback to handle message received at transport level."
+  (session-reply-handler msg))
+
+(defun transport-encoder (data)
+  "Returns encoded data"
+  (let ((protocol (cdr (assoc 'protocol tt-config))))
+    (cond ((string= protocol 'erplv2) (erplv2-encoder data))
+	  (t (error "protocol %s not supported" protocol)))))
+
+(defun transport-decoder (data)
+  "Returns decoded data"
+  (let ((protocol (cdr (assoc 'protocol tt-config))))
+    (cond ((string= protocol 'erplv2) (erplv2-decoder data))
+	  (t (error "protocol %s not supported" protocol)))))
+
+
+;;
+;; Transport: ERPLv2 Protocol
 ;;
 
 (setq erplv2-header-spec
@@ -64,41 +147,6 @@
 
 
 ;;
-;; Networking - the transport layer (ERPLv2, TCIL, ...)
-;;
-
-(defun transport-send (data)
-  "Send 'data' to ip:port using encoder/decoder and calls reply-hanlder with the decoded reply."
-  (setq buffer "")
-  (defun handle-output-flow (process output)
-    "Aggregate output data, decode them and call handler."
-    (setq buffer (concat buffer output))
-    (condition-case nil
-	(transport-reply-handler (transport-decoder (string-make-unibyte buffer)))
-      (error nil)))
-  (let ((ip (cdr (assoc 'ip tt-config)))
-	(port (cdr (assoc 'port tt-config))))
-    (setq p (open-network-stream "ttemacs-process" "*Messages*" ip port))
-    (set-process-filter p 'handle-output-flow) 
-    (process-send-string p (transport-encoder data))))
-
-(defun transport-reply-handler (msg)
-  "Callback to handle message received."
-  (setq reply msg)
-  (ttemacs-log (format ">> Received:\n%s\n" msg)))
-
-(defun transport-encoder (data)
-  (let ((protocol (cdr (assoc 'protocol tt-config))))
-    (cond ((string= protocol 'erplv2) (erplv2-encoder data))
-	  (t (error "protocol %s not supported" protocol)))))
-
-(defun transport-decoder (data)
-  (let ((protocol (cdr (assoc 'protocol tt-config))))
-    (cond ((string= protocol 'erplv2) (erplv2-decoder data))
-	  (t (error "protocol %s not supported" protocol)))))
-
-
-;;
 ;; Logging
 ;;
 
@@ -110,8 +158,7 @@
     (display-buffer "ttemacs-output")
     ))
 
-;; =======================
-
-;tt-send "Il etait une fois.")
-;reply
-
+(defun ttemacs-clean-log ()
+  "Clean ttemacs-output message log buffer."
+  (with-current-buffer (get-buffer-create "ttemacs-output")
+    (delete-region (point-min) (point-max))))
