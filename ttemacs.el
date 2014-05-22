@@ -7,53 +7,93 @@
 
 
 ;;
-;; High level functions/variables (these are the ones you want to use).
+;; High level function (these are the ones you want to use in a scenario).
 ;;
 
-(defvar tt-config
+(defun tt-send (message)
+  "Adds a message to send in the sequencer."
+  (setq sequencer-action-queue (cons `(scenario-send ,message)
+				     sequencer-action-queue)))
+
+(defun tt-match (message)
+  "Adds a message to match in the sequencer."
+  (error "to do..."))
+
+(defun tt-done ()
+  "Starts the injection. To call at the very end of the scenario."
+  (sequencer-next-action))
+
+
+;;
+;; Sequencer
+;;
+
+(setq sequencer-action-queue ())
+
+(defun sequencer-next-action ()
+  "Processes the next action of the sequencer"
+  (eval (car (last sequencer-action-queue)))
+  (setq sequencer-action-queue (butlast sequencer-action-queue)))
+
+
+;;
+;; Scenario layer
+;;
+
+(defvar scenario-current-config
   '((protocol . erplv2)
     (ip . "127.0.0.1")
     (port . 40000))
   "The configuration used by tt-emacs to send messages.")
 
-(defun tt-send (query)
-  "Send a message and save the response in the global var 'reply."
-  (setq query (when (string-match "[ \t\n]*$" query)
-		(replace-match "" nil nil query)))
-  (setq query (when (string-match "^[ \t\n]*" query)
-		(replace-match "" nil nil query)))
-  (ttemacs-log (format ">> Sending message to %s:%s (%s):\n%s\n"
-		       (cdr (assoc 'ip tt-config))
-		       (cdr (assoc 'port tt-config))
-		       (cdr (assoc 'protocol tt-config))
-		       query))
-  (setq reply nil)
+(defun scenario-send (query)
+  "Sends a message and save the response in the global var 'reply."
   (session-send query))
 
-(defun tt-reply-handler (msg)
+(defun scenario-reply-handler (msg)
   "Called upon reception of the reply."
-  (ttemacs-log (format ">> Received:\n%s\n" msg))
-  (setq reply msg))
+  (sequencer-next-action))
 
 
 ;;
 ;; Session layer
 ;;
 
-(defun session-send (data)
-  "Send 'data' to ip:port using.
-   Then, calls session-reply-handler with the decoded reply."
-  (setq data (unpretty-print data))
-  (transport-send data))
+(defun session-send (msg)
+  "Sends 'msg' to ip:port using. session-reply-handler will be called with reply."
+  (setq reply nil)
+  (setq msg (chomp msg))
+  (setq msg (unpretty-print msg))
+  (update-session-with-query msg)
+  (setq msg (update-query-based-on-context msg))
+  (ttemacs-log (format ">> Sending query to %s:%s (%s):\n%s"
+		       (cdr (assoc 'ip scenario-current-config))
+		       (cdr (assoc 'port scenario-current-config))
+		       (cdr (assoc 'protocol scenario-current-config))
+		       (pretty-print msg)))
+  (setq msg (update-with-syntax-separators msg))
+  (transport-send msg))
 
 (defun session-reply-handler (msg)
   "Callback to handle message received at session level."
-  (tt-reply-handler (pretty-print msg)))
+  (setq msg (update-with-display-separators msg))
+  (update-session-with-reply msg)
+  (setq msg (pretty-print msg))
+  (ttemacs-log (format ">> Received:\n%s" msg))
+  (setq reply msg)
+  (scenario-reply-handler msg))
 
 (defun unpretty-print (string)
-  "Removes '\n&', change [+:'*] by ad-hoc separator based on syntax."
+  "Removes '\n&' at end of lines."
   (setq string (replace-regexp-in-string "^[ \t\x0a]*" "" string t nil 0 0))
-  (setq string (replace-regexp-in-string "'\\(&?[ \t\x0a]*\\)" "" string t nil 1 0))
+  (setq string (replace-regexp-in-string "'\\(&?[ \t\x0a]*\\)" "" string t nil 1 0)))
+
+(defun pretty-print (string)
+  "Adds newline between segment of the message."
+  (setq string (replace-regexp-in-string "'" "'&\x0a" string t nil 0 0)))
+
+(defun update-with-syntax-separators (string)
+  "Detects syntax in UNB segment and changes separators accordingly."
   (unless (numberp (string-match "^UNB\\+IATA" string))
     (setq string (replace-regexp-in-string "'" "\x1c" string t nil 0 0))
     (setq string (replace-regexp-in-string "\\+" "\x1d" string t nil 0 0))
@@ -61,13 +101,100 @@
     (setq string (replace-regexp-in-string "\\*" "\x19" string t nil 0 0)))
   string)
 
-(defun pretty-print (string)
-  "Adds newline and printable separator."
+(defun update-with-display-separators (string)
+  "Changes EDI separators by printable ones (the ones of IATA)."
   (setq string (replace-regexp-in-string "\x1c" "'" string t nil 0 0))
   (setq string (replace-regexp-in-string "\x1d" "+" string t nil 0 0))
   (setq string (replace-regexp-in-string "\x1f" ":" string t nil 0 0))
-  (setq string (replace-regexp-in-string "\x19" "*" string t nil 0 0))
-  (setq string (replace-regexp-in-string "'" "'&\x0a" string t nil 0 0)))
+  (setq string (replace-regexp-in-string "\x19" "*" string t nil 0 0)))
+
+;; Context information at session level (e.g. the conversations ID).
+(setq session-context '(local-conv-id     nil
+			local-seq-number  nil
+			remote-conv-id    ""
+			remote-seq-number ""))
+
+(defun update-query-based-on-context (query)
+  "Updates message according to session context."
+  (setq query (update-local-part-of-message
+	       query
+	       (plist-get session-context 'local-conv-id)
+	       (plist-get session-context 'local-seq-number)))
+  (setq query (update-remote-part-of-message
+	       query
+	       (plist-get session-context 'remote-conv-id)
+	       (plist-get session-context 'remote-seq-number)))
+  query)
+
+(defun update-session-with-query (query)
+  "Updates the context with the new message to send."
+  (setq parsed-msg (parse-message query))
+  ;; If local conv ID undefined, then it is the first message in the conv.
+  (if (not (stringp (plist-get session-context 'local-conv-id)))
+      (progn
+	(ttemacs-log "init local conv")
+	(setq session-context
+	      (plist-put session-context 'local-conv-id
+			 (plist-get parsed-msg 'local-conv-id)))
+	(setq session-context
+	      (plist-put session-context 'local-seq-number
+			 "0000"))))
+  ;; Increment sequence number
+  (setq session-context
+	(plist-put session-context 'local-seq-number
+		   (format "%04d" (+ 1 (string-to-number
+					(plist-get session-context
+						   'local-seq-number)))))))
+
+(defun update-session-with-reply (reply)
+  "Updates the session context with a newly received reply."
+  (setq parsed-msg (parse-message reply))
+  (setq session-context
+	(plist-put session-context 'remote-conv-id
+		   (plist-get parsed-msg 'local-conv-id)))
+  (setq session-context
+	(plist-put session-context 'remote-seq-number
+		   (plist-get parsed-msg 'local-seq-number))))
+
+(defun update-local-part-of-message (msg conv-id seq-number)
+  "Returns updated message with local conv ID / seq number."
+  (setq msg (replace-regexp-in-string
+	     "^UNB\\+[^+]*\\+[^+]*\\+[^+]*\\+[^+]*\\+\\([^+]*\\)"
+	     (concat conv-id seq-number)
+	     msg t nil 1 0))
+  (replace-regexp-in-string
+   "UNZ\\+[^+]*\\+\\([^+']*\\)"
+   (concat conv-id seq-number)
+   msg t nil 1 0))
+
+(defun update-remote-part-of-message (msg conv-id seq-number)
+  "Returns updated message with remote conv ID / seq number."
+  (replace-regexp-in-string
+   "^UNB\\+[^+]*\\+[^+]*\\+[^+]*\\+[^+]*\\+[^+]*\\+\\([^+]*\\)"
+   (concat conv-id seq-number)
+   msg t nil 1 0))
+
+(defun parse-message (msg)
+  (string-match
+   "^UNB\\+[^+]*\\+[^+]*\\+[^+]*\\+[^+]*\\+\\([^+]*\\)\\+\\([^+]*\\)"
+   msg)
+  `(local-conv-id     ,(substring msg
+				  (match-beginning 1)
+				  (- (match-end 1) 4))
+    local-seq-number  ,(substring msg
+				  (- (match-end 1) 4)
+				  (match-end 1))
+    remote-conv-id    ,(if (not (= (match-beginning 2) (match-end 2)))
+			   (substring msg
+				      (match-beginning 1)
+				      (- (match-end 1) 4))
+			 "")
+
+    remote-seq-number ,(if (not (= (match-beginning 2) (match-end 2)))
+			   (substring msg
+				      (- (match-end 2) 4)
+				      (match-end 2))
+			 "")))
 
 
 ;;
@@ -84,8 +211,8 @@
     (condition-case nil
 	(transport-reply-handler (transport-decoder (string-make-unibyte buffer)))
       (error nil)))
-  (let ((ip (cdr (assoc 'ip tt-config)))
-	(port (cdr (assoc 'port tt-config))))
+  (let ((ip (cdr (assoc 'ip scenario-current-config)))
+	(port (cdr (assoc 'port scenario-current-config))))
     (setq p (open-network-stream "ttemacs-process" "*Messages*" ip port))
     (set-process-filter p 'handle-output-flow)
     (process-send-string p (transport-encoder data))))
@@ -96,13 +223,13 @@
 
 (defun transport-encoder (data)
   "Returns encoded data"
-  (let ((protocol (cdr (assoc 'protocol tt-config))))
+  (let ((protocol (cdr (assoc 'protocol scenario-current-config))))
     (cond ((string= protocol 'erplv2) (erplv2-encoder data))
 	  (t (error "protocol %s not supported" protocol)))))
 
 (defun transport-decoder (data)
   "Returns decoded data"
-  (let ((protocol (cdr (assoc 'protocol tt-config))))
+  (let ((protocol (cdr (assoc 'protocol scenario-current-config))))
     (cond ((string= protocol 'erplv2) (erplv2-decoder data))
 	  (t (error "protocol %s not supported" protocol)))))
 
@@ -112,8 +239,8 @@
 ;;
 
 (setq erplv2-header-spec
-      '((len1          u16) ; total len of the message (= #x0000)
-	(len2          u16) ; total len of the message (= len(data) + 12 + len(rscv))
+      '((len1          u16) ; len of the message (= #x0000)
+	(len2          u16) ; len of the message (= len(data) + 12 + len(rscv))
 	(checksum1     u16) ; one's complement of the len (= #xFFFF)
 	(checksum2     u16) ; one's complement of the len
 	(headerlen     u16) ; len of the erplv2 header (= len rscv + 4)
@@ -161,3 +288,15 @@
   "Clean ttemacs-output message log buffer."
   (with-current-buffer (get-buffer-create "ttemacs-output")
     (delete-region (point-min) (point-max))))
+
+
+;;
+;; Misc utilities
+;;
+
+(defun chomp (string)
+  (setq string (when (string-match "[ \t\n]*$" query)
+		 (replace-match "" nil nil string)))
+  (setq string (when (string-match "^[ \t\n]*" query)
+		 (replace-match "" nil nil string)))
+  string)
