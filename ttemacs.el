@@ -41,9 +41,9 @@
 ;;
 
 (defvar tt-config
-  '((protocol . erplv2)
-    (ip . "127.0.0.1")
-    (port . 40000))
+  '(protocol erplv2
+    ip       "127.0.0.1"
+    port     40000)
   "The configuration used by tt-emacs to send messages.")
 
 (defun scenario-send (query)
@@ -67,9 +67,9 @@
   (update-session-with-query msg)
   (setq msg (update-query-based-on-context msg))
   (ttemacs-log (format ">> Sending query to %s:%s (%s):\n%s"
-		       (cdr (assoc 'ip tt-config))
-		       (cdr (assoc 'port tt-config))
-		       (cdr (assoc 'protocol tt-config))
+		       (plist-get tt-config 'ip)
+		       (plist-get tt-config 'port)
+		       (plist-get tt-config 'protocol)
 		       (pretty-print msg)))
   (setq msg (update-with-syntax-separators msg))
   (transport-send msg))
@@ -211,8 +211,8 @@
     (condition-case nil
 	(transport-reply-handler (transport-decoder (string-make-unibyte buffer)))
       (error nil)))
-  (let ((ip (cdr (assoc 'ip tt-config)))
-	(port (cdr (assoc 'port tt-config))))
+  (let ((ip (plist-get tt-config 'ip))
+	(port (plist-get tt-config 'port)))
     (setq p (open-network-stream "ttemacs-process" "*Messages*" ip port))
     (set-process-filter p 'handle-output-flow)
     (process-send-string p (transport-encoder data))))
@@ -223,13 +223,13 @@
 
 (defun transport-encoder (data)
   "Returns encoded data"
-  (let ((protocol (cdr (assoc 'protocol tt-config))))
+  (let ((protocol (plist-get tt-config 'protocol)))
     (cond ((string= protocol 'erplv2) (erplv2-encoder data))
 	  (t (error "protocol %s not supported" protocol)))))
 
 (defun transport-decoder (data)
   "Returns decoded data"
-  (let ((protocol (cdr (assoc 'protocol tt-config))))
+  (let ((protocol (plist-get tt-config 'protocol)))
     (cond ((string= protocol 'erplv2) (erplv2-decoder data))
 	  (t (error "protocol %s not supported" protocol)))))
 
