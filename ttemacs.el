@@ -12,8 +12,8 @@
 
 (defun tt-send (message)
   "Adds a message to send in the sequencer."
-  (setq sequencer-action-queue (cons `(scenario-send ,message)
-				     sequencer-action-queue)))
+  (setq ttemacs-sequencer-queue (cons `(scenario-send ,message)
+				     ttemacs-sequencer-queue)))
 
 (defun tt-match (message)
   "Adds a message to match in the sequencer."
@@ -28,12 +28,12 @@
 ;; Sequencer
 ;;
 
-(setq sequencer-action-queue ())
+(setq ttemacs-sequencer-queue ())
 
 (defun sequencer-next-action ()
   "Processes the next action of the sequencer"
-  (eval (car (last sequencer-action-queue)))
-  (setq sequencer-action-queue (butlast sequencer-action-queue)))
+  (eval (car (last ttemacs-sequencer-queue)))
+  (setq ttemacs-sequencer-queue (butlast ttemacs-sequencer-queue)))
 
 
 ;;
@@ -61,7 +61,6 @@
 
 (defun session-send (msg)
   "Sends 'msg' to ip:port using. session-reply-handler will be called with reply."
-  (setq reply nil)
   (setq msg (chomp msg))
   (setq msg (unpretty-print msg))
   (update-session-with-query msg)
@@ -80,7 +79,6 @@
   (update-session-with-reply msg)
   (setq msg (pretty-print msg))
   (ttemacs-log (format ">> Received:\n%s" msg))
-  (setq reply msg)
   (scenario-reply-handler msg))
 
 (defun unpretty-print (string)
@@ -109,52 +107,51 @@
   (setq string (replace-regexp-in-string "\x19" "*" string t nil 0 0)))
 
 ;; Context information at session level (e.g. the conversations ID).
-(setq session-context '(local-conv-id     nil
-			local-seq-number  nil
-			remote-conv-id    ""
-			remote-seq-number ""))
+(setq ttemacs-session-context '(local-conv-id     nil
+				local-seq-number  nil
+			        remote-conv-id    ""
+			        remote-seq-number ""))
 
 (defun update-query-based-on-context (query)
   "Updates message according to session context."
   (setq query (update-local-part-of-message
 	       query
-	       (plist-get session-context 'local-conv-id)
-	       (plist-get session-context 'local-seq-number)))
+	       (plist-get ttemacs-session-context 'local-conv-id)
+	       (plist-get ttemacs-session-context 'local-seq-number)))
   (setq query (update-remote-part-of-message
 	       query
-	       (plist-get session-context 'remote-conv-id)
-	       (plist-get session-context 'remote-seq-number)))
+	       (plist-get ttemacs-session-context 'remote-conv-id)
+	       (plist-get ttemacs-session-context 'remote-seq-number)))
   query)
 
 (defun update-session-with-query (query)
   "Updates the context with the new message to send."
-  (setq parsed-msg (parse-message query))
-  ;; If local conv ID undefined, then it is the first message in the conv.
-  (if (not (stringp (plist-get session-context 'local-conv-id)))
-      (progn
-	(ttemacs-log "init local conv")
-	(setq session-context
-	      (plist-put session-context 'local-conv-id
-			 (plist-get parsed-msg 'local-conv-id)))
-	(setq session-context
-	      (plist-put session-context 'local-seq-number
-			 "0000"))))
-  ;; Increment sequence number
-  (setq session-context
-	(plist-put session-context 'local-seq-number
-		   (format "%04d" (+ 1 (string-to-number
-					(plist-get session-context
-						   'local-seq-number)))))))
+  (let ((parsed-msg (parse-message query)))
+    (if (not (stringp (plist-get ttemacs-session-context 'local-conv-id)))
+	;; Init local ID if first message in conv
+	(progn
+	  (setq ttemacs-session-context
+		(plist-put ttemacs-session-context 'local-conv-id
+			   (plist-get parsed-msg 'local-conv-id)))
+	  (setq ttemacs-session-context
+		(plist-put ttemacs-session-context 'local-seq-number
+			   "0000"))))
+    ;; Increment sequence number
+    (setq ttemacs-session-context
+	  (plist-put ttemacs-session-context 'local-seq-number
+		     (format "%04d" (+ 1 (string-to-number
+					  (plist-get ttemacs-session-context
+						     'local-seq-number))))))))
 
 (defun update-session-with-reply (reply)
   "Updates the session context with a newly received reply."
-  (setq parsed-msg (parse-message reply))
-  (setq session-context
-	(plist-put session-context 'remote-conv-id
-		   (plist-get parsed-msg 'local-conv-id)))
-  (setq session-context
-	(plist-put session-context 'remote-seq-number
-		   (plist-get parsed-msg 'local-seq-number))))
+  (let ((parsed-msg (parse-message reply)))
+    (setq ttemacs-session-context
+	  (plist-put ttemacs-session-context 'remote-conv-id
+		     (plist-get parsed-msg 'local-conv-id)))
+    (setq ttemacs-session-context
+	  (plist-put ttemacs-session-context 'remote-seq-number
+		     (plist-get parsed-msg 'local-seq-number)))))
 
 (defun update-local-part-of-message (msg conv-id seq-number)
   "Returns updated message with local conv ID / seq number."
@@ -189,7 +186,6 @@
 				      (match-beginning 1)
 				      (- (match-end 1) 4))
 			 "")
-
     remote-seq-number ,(if (not (= (match-beginning 2) (match-end 2)))
 			   (substring msg
 				      (- (match-end 2) 4)
@@ -201,21 +197,27 @@
 ;; Transport layer
 ;;
 
+;; The process that handle the cxn
+(setq ttemacs-process nil)
+
 (defun transport-send (data)
   "Send 'data' to ip:port using ad-hoc transport encoder/decoder.
    Then, calls transport-reply-handler with the decoded reply."
-  (setq buffer "")
+  (setq ttemacs-recv-buffer "")
   (defun handle-output-flow (process output)
     "Aggregate output data, decode them and call handler."
-    (setq buffer (concat buffer output))
+    (setq ttemacs-recv-buffer (concat ttemacs-recv-buffer output))
     (condition-case nil
-	(transport-reply-handler (transport-decoder (string-make-unibyte buffer)))
+	(transport-reply-handler
+	 (transport-decoder
+	  (string-make-unibyte ttemacs-recv-buffer)))
       (error nil)))
   (let ((ip (plist-get tt-config 'ip))
 	(port (plist-get tt-config 'port)))
-    (setq p (open-network-stream "ttemacs-process" "*Messages*" ip port))
-    (set-process-filter p 'handle-output-flow)
-    (process-send-string p (transport-encoder data))))
+    (setq ttemacs-process
+	  (open-network-stream "ttemacs-process" "*Messages*" ip port))
+    (set-process-filter ttemacs-process 'handle-output-flow)
+    (process-send-string ttemacs-process (transport-encoder data))))
 
 (defun transport-reply-handler (msg)
   "Callback to handle message received at transport level."
@@ -295,6 +297,7 @@
 ;;
 
 (defun chomp (string)
+  "Remove heading/trailing whitespace, new lines, etc."
   (setq string (when (string-match "[ \t\n]*$" query)
 		 (replace-match "" nil nil string)))
   (setq string (when (string-match "^[ \t\n]*" query)
