@@ -40,7 +40,7 @@
 ;; Scenario layer
 ;;
 
-(defvar scenario-current-config
+(defvar tt-config
   '((protocol . erplv2)
     (ip . "127.0.0.1")
     (port . 40000))
@@ -67,9 +67,9 @@
   (update-session-with-query msg)
   (setq msg (update-query-based-on-context msg))
   (ttemacs-log (format ">> Sending query to %s:%s (%s):\n%s"
-		       (cdr (assoc 'ip scenario-current-config))
-		       (cdr (assoc 'port scenario-current-config))
-		       (cdr (assoc 'protocol scenario-current-config))
+		       (cdr (assoc 'ip tt-config))
+		       (cdr (assoc 'port tt-config))
+		       (cdr (assoc 'protocol tt-config))
 		       (pretty-print msg)))
   (setq msg (update-with-syntax-separators msg))
   (transport-send msg))
@@ -211,8 +211,8 @@
     (condition-case nil
 	(transport-reply-handler (transport-decoder (string-make-unibyte buffer)))
       (error nil)))
-  (let ((ip (cdr (assoc 'ip scenario-current-config)))
-	(port (cdr (assoc 'port scenario-current-config))))
+  (let ((ip (cdr (assoc 'ip tt-config)))
+	(port (cdr (assoc 'port tt-config))))
     (setq p (open-network-stream "ttemacs-process" "*Messages*" ip port))
     (set-process-filter p 'handle-output-flow)
     (process-send-string p (transport-encoder data))))
@@ -223,13 +223,13 @@
 
 (defun transport-encoder (data)
   "Returns encoded data"
-  (let ((protocol (cdr (assoc 'protocol scenario-current-config))))
+  (let ((protocol (cdr (assoc 'protocol tt-config))))
     (cond ((string= protocol 'erplv2) (erplv2-encoder data))
 	  (t (error "protocol %s not supported" protocol)))))
 
 (defun transport-decoder (data)
   "Returns decoded data"
-  (let ((protocol (cdr (assoc 'protocol scenario-current-config))))
+  (let ((protocol (cdr (assoc 'protocol tt-config))))
     (cond ((string= protocol 'erplv2) (erplv2-decoder data))
 	  (t (error "protocol %s not supported" protocol)))))
 
