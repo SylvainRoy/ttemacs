@@ -10,22 +10,30 @@
 ;; High level function (these are the ones you want to use in a scenario).
 ;;
 
-;; todo: def of the config
 ;; todo: def of "process" action
+
+(defun tt-configuration (config)
+  "Sets the network configuration to use."
+  (setq ttemacs-sequencer-queue
+	(cons `(lambda ()
+		 (scenario-set-configuration ',config))
+	      ttemacs-sequencer-queue)))
 
 (defun tt-send (query)
   "Adds a message to send in the sequencer."
-  (setq ttemacs-sequencer-queue (cons `(scenario-send ,query)
-				      ttemacs-sequencer-queue)))
+  (setq ttemacs-sequencer-queue
+	(cons `(lambda () (scenario-send ',query))
+	      ttemacs-sequencer-queue)))
 
 (defun tt-match (template)
   "Matches the reply with template."
-  (setq ttemacs-sequencer-queue (cons `(scenario-match ,template)
-				      ttemacs-sequencer-queue)))
+  (setq ttemacs-sequencer-queue
+	(cons `(lambda () (scenario-match ',template))
+	      ttemacs-sequencer-queue)))
 
 (defun tt-done ()
   "Starts the injection. To call at the very end of the scenario."
-  (ttemacs-log "Done with the def... Let's go for it!")
+  (ttemacs-log ">> Starting")
   (ttemacs-clean-log)
   (ttemacs-clean-variables)
   (sequencer-next-action))
@@ -44,8 +52,10 @@
 	(progn
 	  ;; Dequeue and exec next action
 	  (setq ttemacs-sequencer-queue (butlast ttemacs-sequencer-queue))
-	  (eval toeval))
-      (delete-process ttemacs-process))))
+	  (funcall toeval))
+      (progn
+	(ttemacs-log ">> Closing cxn")
+	(delete-process ttemacs-process)))))
 
 
 ;;
@@ -60,6 +70,15 @@
 
 (defvar tt-variables ()
   "The variables defined in queries/replies via {%varname%=*} pattern.")
+
+(defun scenario-set-configuration (config)
+  "Sets the network configuration to use."
+  (ttemacs-log (format ">> Configuration:\n - ip:%s\n - port:%s\n - protocol:%s\n"
+		       (plist-get tt-config 'ip)
+		       (plist-get tt-config 'port)
+		       (plist-get tt-config 'protocol)))
+  (setq tt-config config)
+  (sequencer-next-action))
 
 (defun ttemacs-clean-variables ()
   "Resets the registered variables."
@@ -176,7 +195,7 @@
   (setq msg (unpretty-print msg))
   (update-session-with-query msg)
   (setq msg (update-query-based-on-context msg))
-  (ttemacs-log (format ">> Sending query to %s:%s (%s):\n%s\n"
+  (ttemacs-log (format ">> Sent query to %s:%s (%s):\n%s\n"
 		       (plist-get tt-config 'ip)
 		       (plist-get tt-config 'port)
 		       (plist-get tt-config 'protocol)

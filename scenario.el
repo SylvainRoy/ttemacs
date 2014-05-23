@@ -5,9 +5,9 @@
 
 (load-file "./ttemacs.el")
 
-(setq tt-config '(protocol  erplv2
-		  ip        "127.0.0.1"
-		  port      40000))
+(tt-configuration '(protocol  erplv2
+		    ip        "127.0.0.1"
+                    port      40000))
 
 (tt-send "
 UNB+IATB:1+UNTO+FROM+140521:2133+002UOSLJ5F0001+++S'&
