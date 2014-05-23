@@ -10,57 +10,57 @@
 ;; High level function (these are the ones you want to use in a scenario).
 ;;
 
-(defun tt-process (fun)
-  "Executes the function fun"
-  (setq ttemacs-sequencer-queue
-	(cons `(lambda ()
-		 (scenario-process ,fun))
-	      ttemacs-sequencer-queue)))
-
 (defun tt-configuration (config)
-  "Sets the network configuration to use."
+  "Set the network configuration to use."
   (setq ttemacs-sequencer-queue
 	(cons `(lambda ()
 		 (scenario-set-configuration ',config))
 	      ttemacs-sequencer-queue)))
 
 (defun tt-send (query)
-  "Adds a message to send in the sequencer."
+  "Add a message to send in the sequencer."
   (setq ttemacs-sequencer-queue
 	(cons `(lambda () (scenario-send ',query))
 	      ttemacs-sequencer-queue)))
 
 (defun tt-match (template)
-  "Matches the reply with template."
+  "Matche the reply with template."
   (setq ttemacs-sequencer-queue
 	(cons `(lambda () (scenario-match ',template))
 	      ttemacs-sequencer-queue)))
 
+(defun tt-process (fun)
+  "Execute the function fun"
+  (setq ttemacs-sequencer-queue
+	(cons `(lambda ()
+		 (scenario-process ,fun))
+	      ttemacs-sequencer-queue)))
+
 (defun tt-done ()
-  "Starts the injection. To call at the very end of the scenario."
-  (ttemacs-log ">> Starting")
+  "Start the injection. To call at the very end of the scenario."
+  (tt-log ">> Starting")
   (ttemacs-clean-log)
   (ttemacs-clean-variables)
   (sequencer-next-action))
 
+(defun tt-get-var (name)
+  "Get the value of a scenario variable.
+   To use within a tt-process directive only!"
+  (lax-plist-get tt-variables name))
 
-;;
-;; Sequencer
-;;
+(defun tt-set-var (name value)
+  "Set the value of a scenario variable.
+   To use within a tt-process directive only!"
+  (lax-plist-put tt-variables name value))
 
-(setq ttemacs-sequencer-queue ())
-
-(defun sequencer-next-action ()
-  "Processes the next action of the sequencer"
-  (let ((toeval (car (last ttemacs-sequencer-queue))))
-    (if toeval
-	(progn
-	  ;; Dequeue and exec next action
-	  (setq ttemacs-sequencer-queue (butlast ttemacs-sequencer-queue))
-	  (funcall toeval))
-      (progn
-	(ttemacs-log ">> Closing cxn")
-	(delete-process ttemacs-process)))))
+(defun tt-log (message)
+  "Log message in ttemacs-output.
+   To use within a tt-process directive only!"
+  (with-current-buffer (get-buffer-create "ttemacs-output")
+    (goto-char (point-max))
+    (insert (concat message "\n"))
+    (display-buffer "ttemacs-output")
+    ))
 
 
 ;;
@@ -71,14 +71,30 @@
   '(protocol erplv2
     ip       "127.0.0.1"
     port     40000)
-  "The configuration used by tt-emacs to send messages. Use 'tt-configuration function to update it.")
+  "The configuration used by tt-emacs to send messages.
+   Use 'tt-configuration function to update it.")
 
 (defvar tt-variables ()
   "The variables defined in queries/replies via {%varname%=*} pattern.")
 
+(defvar ttemacs-sequencer-queue ()
+  "The list of actions pending to be processed.")
+
+(defun sequencer-next-action ()
+  "Process the next action of the sequencer"
+  (let ((toeval (car (last ttemacs-sequencer-queue))))
+    (if toeval
+	(progn
+	  ;; Dequeue and exec next action
+	  (setq ttemacs-sequencer-queue (butlast ttemacs-sequencer-queue))
+	  (funcall toeval))
+      (progn
+	(tt-log ">> Cxn Closed")
+	(delete-process ttemacs-process)))))
+
 (defun scenario-set-configuration (config)
-  "Sets the network configuration to use."
-  (ttemacs-log (format ">> Configuration:\n - ip:%s\n - port:%s\n - protocol:%s\n"
+  "Set the network configuration to use."
+  (tt-log (format ">> Configuration:\n - ip:%s\n - port:%s\n - protocol:%s\n"
 		       (plist-get tt-config 'ip)
 		       (plist-get tt-config 'port)
 		       (plist-get tt-config 'protocol)))
@@ -87,18 +103,19 @@
 
 (defun scenario-process (fun)
   "Process fun in the context of the scenario."
-  (setq variables (funcall fun tt-variables))
+  (tt-log ">> Processed:\n")
+  (setq variables (funcall fun))
   (sequencer-next-action))
 
 (defun ttemacs-clean-variables ()
-  "Resets the registered variables."
+  "Reset the registered variables."
   (setq tt-variables ()))
 
 (defvar tt-last-reply ()
   "The last reply received by the injector.")
 
 (defun scenario-send (query)
-  "Sends a message and save the response in the global var 'reply."
+  "Send a message and save the response in the global var 'reply."
   (session-send (implement-query-template query tt-variables)))
 
 (defun scenario-reply-handler (msg)
@@ -116,7 +133,7 @@
     (while l
       (setq out (concat out "\n    " (car l) " = " (car (cdr l))))
       (setq l (cddr l)))
-    (ttemacs-log (concat ">> Variables: " out "\n")))
+    (tt-log (concat ">> Matched: " out "\n")))
   (sequencer-next-action))
 
 (defun implement-query-template (query-template variables)
@@ -133,7 +150,7 @@
 			    t nil 0 0))
 
 (defun parse-reply (template-reply reply)
-  "Returns a plist of assoc (variable name => value), nil if no match."
+  "Return a plist of assoc (variable name => value), nil if no match."
   (let* ((r (build-reply-regexp template-reply))
 	 (regexp-of-template (car r))
 	 (variables-of-template (car (cdr r)))
@@ -154,7 +171,7 @@
       nil)))
 
 (defun build-reply-regexp (template-reply)
-  "Returns:
+  "Return:
    - a regular expression that matches instances of the template
    - a plist that gives the assoc (variable name => index of regexp group)
 	where a variable is def in the template by {%varname%=*}"
@@ -200,16 +217,12 @@
 ;;
 
 (defun session-send (msg)
-  "Sends 'msg' to ip:port using. session-reply-handler will be called with reply."
+  "Send 'msg' to ip:port using. session-reply-handler will be called with reply."
   (setq msg (chomp msg))
   (setq msg (unpretty-print msg))
   (update-session-with-query msg)
   (setq msg (update-query-based-on-context msg))
-  (ttemacs-log (format ">> Sent query to %s:%s (%s):\n%s\n"
-		       (plist-get tt-config 'ip)
-		       (plist-get tt-config 'port)
-		       (plist-get tt-config 'protocol)
-		       (pretty-print msg)))
+  (tt-log (format ">> Sent:\n%s\n" (pretty-print msg)))
   (setq msg (update-with-syntax-separators msg))
   (transport-send msg))
 
@@ -218,20 +231,20 @@
   (setq msg (update-with-display-separators msg))
   (update-session-with-reply msg)
   (setq msg (pretty-print msg))
-  (ttemacs-log (format ">> Received:\n%s\n" msg))
+  (tt-log (format ">> Received:\n%s\n" msg))
   (scenario-reply-handler msg))
 
 (defun unpretty-print (string)
-  "Removes '\n&' at end of lines."
+  "Remove '\n&' at end of lines."
   (setq string (replace-regexp-in-string "^[ \t\x0a]*" "" string t nil 0 0))
   (setq string (replace-regexp-in-string "'\\(&?[ \t\x0a]*\\)" "" string t nil 1 0)))
 
 (defun pretty-print (string)
-  "Adds newline between segment of the message."
+  "Add newline between segment of the message."
   (setq string (replace-regexp-in-string "\\('\\)." "'&\x0a" string t nil 1 0)))
 
 (defun update-with-syntax-separators (string)
-  "Detects syntax in UNB segment and changes separators accordingly."
+  "Detect syntax in UNB segment and changes separators accordingly."
   (unless (numberp (string-match "^UNB\\+IATA" string))
     (setq string (replace-regexp-in-string "'" "\x1c" string t nil 0 0))
     (setq string (replace-regexp-in-string "\\+" "\x1d" string t nil 0 0))
@@ -240,7 +253,7 @@
   string)
 
 (defun update-with-display-separators (string)
-  "Changes EDI separators by printable ones (the ones of IATA)."
+  "Change EDI separators by printable ones (the ones of IATA)."
   (setq string (replace-regexp-in-string "\x1c" "'" string t nil 0 0))
   (setq string (replace-regexp-in-string "\x1d" "+" string t nil 0 0))
   (setq string (replace-regexp-in-string "\x1f" ":" string t nil 0 0))
@@ -253,7 +266,7 @@
 				remote-seq-number ""))
 
 (defun update-query-based-on-context (query)
-  "Updates message according to session context."
+  "Update message according to session context."
   (setq query (update-local-part-of-message
 	       query
 	       (plist-get ttemacs-session-context 'local-conv-id)
@@ -265,7 +278,7 @@
   query)
 
 (defun update-session-with-query (query)
-  "Updates the context with the new message to send."
+  "Update the context with the new message to send."
   (let ((parsed-msg (parse-message query)))
     (if (not (stringp (plist-get ttemacs-session-context 'local-conv-id)))
 	;; Init local ID if first message in conv
@@ -284,7 +297,7 @@
 						     'local-seq-number))))))))
 
 (defun update-session-with-reply (reply)
-  "Updates the session context with a newly received reply."
+  "Update the session context with a newly received reply."
   (let ((parsed-msg (parse-message reply)))
     (setq ttemacs-session-context
 	  (plist-put ttemacs-session-context 'remote-conv-id
@@ -294,7 +307,7 @@
 		     (plist-get parsed-msg 'local-seq-number)))))
 
 (defun update-local-part-of-message (msg conv-id seq-number)
-  "Returns updated message with local conv ID / seq number."
+  "Return updated message with local conv ID / seq number."
   (setq msg (replace-regexp-in-string
 	     "^UNB\\+[^+]*\\+[^+]*\\+[^+]*\\+[^+]*\\+\\([^+]*\\)"
 	     (concat conv-id seq-number)
@@ -305,13 +318,15 @@
    msg t nil 1 0))
 
 (defun update-remote-part-of-message (msg conv-id seq-number)
-  "Returns updated message with remote conv ID / seq number."
+  "Return updated message with remote conv ID / seq number."
   (replace-regexp-in-string
    "^UNB\\+[^+]*\\+[^+]*\\+[^+]*\\+[^+]*\\+[^+]*\\+\\([^+]*\\)"
    (concat conv-id seq-number)
    msg t nil 1 0))
 
 (defun parse-message (msg)
+  "Parse UNB part of a message and return plist of the conv-ids and
+   sequence numbers."
   (string-match
    "^UNB\\+[^+]*\\+[^+]*\\+[^+]*\\+[^+]*\\+\\([^+]*\\)\\+\\([^+]*\\)"
    msg)
@@ -342,7 +357,7 @@
 
 (defun transport-send (data)
   "Send 'data' to ip:port using ad-hoc transport encoder/decoder.
-   Then, calls transport-reply-handler with the decoded reply."
+   Then, call transport-reply-handler with the decoded reply."
   (setq ttemacs-recv-buffer "")
   (defun handle-output-flow (process output)
     "Aggregate output data, decode them and call handler."
@@ -364,13 +379,13 @@
   (session-reply-handler msg))
 
 (defun transport-encoder (data)
-  "Returns encoded data"
+  "Return encoded data"
   (let ((protocol (plist-get tt-config 'protocol)))
     (cond ((string= protocol 'erplv2) (erplv2-encoder data))
 	  (t (error "protocol %s not supported" protocol)))))
 
 (defun transport-decoder (data)
-  "Returns decoded data"
+  "Return decoded data"
   (let ((protocol (plist-get tt-config 'protocol)))
     (cond ((string= protocol 'erplv2) (erplv2-decoder data))
 	  (t (error "protocol %s not supported" protocol)))))
@@ -415,24 +430,6 @@
 
 
 ;;
-;; Logging
-;;
-
-(defun ttemacs-log (message)
-  "Log message in ttemacs-output"
-  (with-current-buffer (get-buffer-create "ttemacs-output")
-    (goto-char (point-max))
-    (insert (concat message "\n"))
-    (display-buffer "ttemacs-output")
-    ))
-
-(defun ttemacs-clean-log ()
-  "Clean ttemacs-output message log buffer."
-  (with-current-buffer (get-buffer-create "ttemacs-output")
-    (delete-region (point-min) (point-max))))
-
-
-;;
 ;; Misc utilities
 ;;
 
@@ -444,11 +441,9 @@
 		 (replace-match "" nil nil string)))
   string)
 
-(defun lax-plist-update (source destination)
-  "Update destination plist with content of source list."
-  (while source
-    (let ((key (car source))
-	  (value (car (cdr source))))
-      (lax-plist-put destination key value)
-      (setq source (cddr source))))
-  destination)
+(defun ttemacs-clean-log ()
+  "Clean ttemacs-output message log buffer."
+  (with-current-buffer (get-buffer-create "ttemacs-output")
+    (delete-region (point-min) (point-max))))
+
+

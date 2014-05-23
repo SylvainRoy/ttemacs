@@ -1,7 +1,7 @@
 ;; Example of ttemacs injection file.
 
 ;; You need to open this file with emacs to run it.
-;; Then, you just have to, eval the buffer in emacs (M-x eval-buffer).
+;; Then, you just have to eval the buffer (M-x eval-buffer).
 
 (load-file "./ttemacs.el")
 
@@ -26,16 +26,13 @@ UNZ+1+{*}'
 ")
 
 (tt-process
- (lambda (variables)
+ (lambda ()
    ;; Let's print the date matched in the output
-   (ttemacs-log (format ">> date is equal to %s\n"
-			(lax-plist-get variables "%date%")))
+   (tt-log (format ">> date is equal to %s\n" (tt-get-var"%date%")))
    ;; and go to the next day for the next message
-   (lax-plist-put variables
-		  "%date%"
-		  (format "%s" (+ 1 (string-to-number
-				     (lax-plist-get variables "%date%"))))))
-)
+   (tt-set-var "%date%"
+	       (format "%s"
+		       (+ 1 (string-to-number (tt-get-var "%date%")))))))
 
 (tt-send "
 UNB+IATB:1+UNTO+FROM+%date%:2133+002UOSLJ5F0002+++E'&
@@ -61,4 +58,6 @@ UNT+7+1'&
 UNZ+1+002UOSLJ5F0002'
 ")
 
+;; This is the directive that will start it all.
+;; Don't forget it...
 (tt-done)
