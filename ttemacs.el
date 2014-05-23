@@ -10,7 +10,12 @@
 ;; High level function (these are the ones you want to use in a scenario).
 ;;
 
-;; todo: def of "process" action
+(defun tt-process (fun)
+  "Executes the function fun"
+  (setq ttemacs-sequencer-queue
+	(cons `(lambda ()
+		 (scenario-process ,fun))
+	      ttemacs-sequencer-queue)))
 
 (defun tt-configuration (config)
   "Sets the network configuration to use."
@@ -78,6 +83,11 @@
 		       (plist-get tt-config 'port)
 		       (plist-get tt-config 'protocol)))
   (setq tt-config config)
+  (sequencer-next-action))
+
+(defun scenario-process (fun)
+  "Process fun in the context of the scenario."
+  (setq variables (funcall fun tt-variables))
   (sequencer-next-action))
 
 (defun ttemacs-clean-variables ()

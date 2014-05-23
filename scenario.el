@@ -25,8 +25,20 @@ UNT+7+1'&
 UNZ+1+{*}'
 ")
 
+(tt-process
+ (lambda (variables)
+   ;; Let's print the date matched in the output
+   (ttemacs-log (format ">> date is equal to %s\n"
+			(lax-plist-get variables "%date%")))
+   ;; and go to the next day for the next message
+   (lax-plist-put variables
+		  "%date%"
+		  (format "%s" (+ 1 (string-to-number
+				     (lax-plist-get variables "%date%"))))))
+)
+
 (tt-send "
-UNB+IATB:1+UNTO+FROM+140521:2133+002UOSLJ5F0002+++E'&
+UNB+IATB:1+UNTO+FROM+%date%:2133+002UOSLJ5F0002+++E'&
 UNH+1+AVLREQ:01:1:UN'&
 MSD+2:38'&
 UNT+7+1'&
