@@ -80,6 +80,9 @@
 (defvar ttemacs-sequencer-queue ()
   "The list of actions pending to be processed.")
 
+(defvar tt-last-reply ()
+  "The last reply received by the injector.")
+
 (defun sequencer-next-action ()
   "Process the next action of the sequencer"
   (let ((toeval (car (last ttemacs-sequencer-queue))))
@@ -110,9 +113,6 @@
 (defun ttemacs-clean-variables ()
   "Reset the registered variables."
   (setq tt-variables ()))
-
-(defvar tt-last-reply ()
-  "The last reply received by the injector.")
 
 (defun scenario-send (query)
   "Send a message and save the response in the global var 'reply."
@@ -216,6 +216,12 @@
 ;; Session layer
 ;;
 
+(defvar ttemacs-session-context '(local-conv-id     nil
+				  local-seq-number  nil
+				  remote-conv-id    ""
+				  remote-seq-number "")
+  "Context information at session level (e.g. the conversations ID).")
+
 (defun session-send (msg)
   "Send 'msg' to ip:port using. session-reply-handler will be called with reply."
   (setq msg (chomp msg))
@@ -258,12 +264,6 @@
   (setq string (replace-regexp-in-string "\x1d" "+" string t nil 0 0))
   (setq string (replace-regexp-in-string "\x1f" ":" string t nil 0 0))
   (setq string (replace-regexp-in-string "\x19" "*" string t nil 0 0)))
-
-;; Context information at session level (e.g. the conversations ID).
-(setq ttemacs-session-context '(local-conv-id     nil
-				local-seq-number  nil
-				remote-conv-id    ""
-				remote-seq-number ""))
 
 (defun update-query-based-on-context (query)
   "Update message according to session context."
@@ -352,8 +352,8 @@
 ;; Transport layer
 ;;
 
-;; The process that handle the cxn
-(setq ttemacs-process nil)
+(defvar ttemacs-process nil
+  "The process that handle the cxn")
 
 (defun transport-send (data)
   "Send 'data' to ip:port using ad-hoc transport encoder/decoder.
@@ -395,7 +395,7 @@
 ;; Transport: ERPLv2 Protocol
 ;;
 
-(setq erplv2-header-spec
+(defvar erplv2-header-spec
       '((len1          u16) ; len of the message (= #x0000)
 	(len2          u16) ; len of the message (= len(data) + 12 + len(rscv))
 	(checksum1     u16) ; one's complement of the len (= #xFFFF)
@@ -406,7 +406,8 @@
 	(rscv          str (eval (- (bindat-get-field struct 'headerlen) 4)))
 	(message       str (eval (- (bindat-get-field struct 'len2)
 				    (bindat-get-field struct 'headerlen)
-				    8)))))
+				    8))))
+      "Definition of an ERPLv2 header.")
 
 (defun erplv2-encoder (msg)
   "Encode a message in ERPLv2."
@@ -445,5 +446,3 @@
   "Clean ttemacs-output message log buffer."
   (with-current-buffer (get-buffer-create "ttemacs-output")
     (delete-region (point-min) (point-max))))
-
-
