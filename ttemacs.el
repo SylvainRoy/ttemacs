@@ -10,17 +10,24 @@
 ;; High level function (these are the ones you want to use in a scenario).
 ;;
 
-(defun tt-send (message)
-  "Adds a message to send in the sequencer."
-  (setq ttemacs-sequencer-queue (cons `(scenario-send ,message)
-				     ttemacs-sequencer-queue)))
+;; todo: def of the config
+;; todo: def of "process" action
 
-(defun tt-match (message)
-  "Adds a message to match in the sequencer."
-  (error "to do..."))
+(defun tt-send (query)
+  "Adds a message to send in the sequencer."
+  (setq ttemacs-sequencer-queue (cons `(scenario-send ,query)
+				      ttemacs-sequencer-queue)))
+
+(defun tt-match (template)
+  "Matches the reply with template."
+  (setq ttemacs-sequencer-queue (cons `(scenario-match ,template)
+				      ttemacs-sequencer-queue)))
 
 (defun tt-done ()
   "Starts the injection. To call at the very end of the scenario."
+  (ttemacs-log "Done with the def... Let's go for it!")
+  (ttemacs-clean-log)
+  (ttemacs-clean-variables)
   (sequencer-next-action))
 
 
@@ -32,8 +39,13 @@
 
 (defun sequencer-next-action ()
   "Processes the next action of the sequencer"
-  (eval (car (last ttemacs-sequencer-queue)))
-  (setq ttemacs-sequencer-queue (butlast ttemacs-sequencer-queue)))
+  (let ((toeval (car (last ttemacs-sequencer-queue))))
+    (if toeval
+	(progn
+	  ;; Dequeue and exec next action
+	  (setq ttemacs-sequencer-queue (butlast ttemacs-sequencer-queue))
+	  (eval toeval))
+      (delete-process ttemacs-process))))
 
 
 ;;
@@ -44,15 +56,114 @@
   '(protocol erplv2
     ip       "127.0.0.1"
     port     40000)
-  "The configuration used by tt-emacs to send messages.")
+  "The configuration used by tt-emacs to send messages. Use 'tt-configuration function to update it.")
+
+(defvar tt-variables ()
+  "The variables defined in queries/replies via {%varname%=*} pattern.")
+
+(defun ttemacs-clean-variables ()
+  "Resets the registered variables."
+  (setq tt-variables ()))
+
+(defvar tt-last-reply ()
+  "The last reply received by the injector.")
 
 (defun scenario-send (query)
   "Sends a message and save the response in the global var 'reply."
-  (session-send query))
+  (session-send (implement-query-template query tt-variables)))
 
 (defun scenario-reply-handler (msg)
-  "Called upon reception of the reply."
+  "Called upon reception of the reply. Save the reply in 'tt-last-reply."
+  (setq tt-last-reply msg)
   (sequencer-next-action))
+
+(defun scenario-match (template)
+  "Matches the last reply against template and save variables."
+  (setq template (chomp template))
+  (setq tt-variables (append (parse-reply template tt-last-reply)
+			     tt-variables))
+  (let ((l tt-variables)
+	(out ""))
+    (while l
+      (setq out (concat out "\n    " (car l) " = " (car (cdr l))))
+      (setq l (cddr l)))
+    (ttemacs-log (concat ">> Variables: " out "\n")))
+  (sequencer-next-action))
+
+(defun implement-query-template (query-template variables)
+  "Implement the template with the variables given in parameter."
+  (defun set-variable-in-query-template (matched-region)
+    (let* ((var-name matched-region)
+	   (var-value (lax-plist-get variables var-name)))
+      (if var-value
+	  var-value
+	(format "[[%s Not Found]]" var-name))))
+  (replace-regexp-in-string "\\(%[^%]+%\\)"
+			    'set-variable-in-query-template
+			    query-template
+			    t nil 0 0))
+
+(defun parse-reply (template-reply reply)
+  "Returns a plist of assoc (variable name => value), nil if no match."
+  (let* ((r (build-reply-regexp template-reply))
+	 (regexp-of-template (car r))
+	 (variables-of-template (car (cdr r)))
+	 (variables ()))
+    (if (string-match regexp-of-template reply)
+	(progn
+	  (while variables-of-template
+	    (let ((name     (car variables-of-template))
+		  (position (cadr variables-of-template)))
+	      (setq variables (lax-plist-put
+			       variables
+			       name
+			       (substring reply
+					  (match-beginning (+ 1 position))
+					  (match-end (+ 1 position)))))
+	      (setq variables-of-template (cddr variables-of-template))))
+	  variables)
+      nil)))
+
+(defun build-reply-regexp (template-reply)
+  "Returns:
+   - a regular expression that matches instances of the template
+   - a plist that gives the assoc (variable name => index of regexp group)
+	where a variable is def in the template by {%varname%=*}"
+  (let* ((variable-position 0)
+	 (variables-strings ())
+	 (variables-of-template ()))
+    ;; Find all variable regions, list variables, replace regions by regexp
+    (defun list-and-replace (matched-region)
+      "Collects and replaces variable regions."
+      (setq variables-strings (cons matched-region variables-strings))
+      "\\\\([^+:'*]*\\\\)")
+    (setq template-reply (replace-regexp-in-string
+			  "{[ \t]*\\(%[^%]*%[ \t]*=[ \t]*\\)?\\*[ \t]*}"
+			  'list-and-replace
+			  template-reply
+			  t nil 0 0))
+    ;; Escape '+' which is a special character in regexp
+    ;; todo: what about the other special characters?!
+    (setq template-reply (replace-regexp-in-string
+			  "\\+"
+			  "\\\\+"
+			  template-reply
+			  t nil 0 0))
+    ;; Build plist of (variable => variable position in regexp)
+    (setq variables-strings (reverse variables-strings))
+    (while variables-strings
+      (setq variable (car variables-strings))
+      (setq split-name (split-string variable "%"))
+      ;; If it can be split by %, then there is a variable name in it
+      ;; (e.g. {%varname%=*}) and then we want to index it.
+      (if (= 3 (length split-name))
+	  (setq variables-of-template
+		(lax-plist-put variables-of-template
+			       (concat "%" (nth 1 split-name) "%")
+			       variable-position)))
+      (setq variable-position (+ variable-position 1))
+      (setq variables-strings (cdr variables-strings)))
+    (list template-reply variables-of-template)))
 
 
 ;;
@@ -65,7 +176,7 @@
   (setq msg (unpretty-print msg))
   (update-session-with-query msg)
   (setq msg (update-query-based-on-context msg))
-  (ttemacs-log (format ">> Sending query to %s:%s (%s):\n%s"
+  (ttemacs-log (format ">> Sending query to %s:%s (%s):\n%s\n"
 		       (plist-get tt-config 'ip)
 		       (plist-get tt-config 'port)
 		       (plist-get tt-config 'protocol)
@@ -78,7 +189,7 @@
   (setq msg (update-with-display-separators msg))
   (update-session-with-reply msg)
   (setq msg (pretty-print msg))
-  (ttemacs-log (format ">> Received:\n%s" msg))
+  (ttemacs-log (format ">> Received:\n%s\n" msg))
   (scenario-reply-handler msg))
 
 (defun unpretty-print (string)
@@ -88,7 +199,7 @@
 
 (defun pretty-print (string)
   "Adds newline between segment of the message."
-  (setq string (replace-regexp-in-string "'" "'&\x0a" string t nil 0 0)))
+  (setq string (replace-regexp-in-string "\\('\\)." "'&\x0a" string t nil 1 0)))
 
 (defun update-with-syntax-separators (string)
   "Detects syntax in UNB segment and changes separators accordingly."
@@ -109,8 +220,8 @@
 ;; Context information at session level (e.g. the conversations ID).
 (setq ttemacs-session-context '(local-conv-id     nil
 				local-seq-number  nil
-			        remote-conv-id    ""
-			        remote-seq-number ""))
+				remote-conv-id    ""
+				remote-seq-number ""))
 
 (defun update-query-based-on-context (query)
   "Updates message according to session context."
@@ -298,8 +409,17 @@
 
 (defun chomp (string)
   "Remove heading/trailing whitespace, new lines, etc."
-  (setq string (when (string-match "[ \t\n]*$" query)
+  (setq string (when (string-match "^[ \t\n]+" string)
 		 (replace-match "" nil nil string)))
-  (setq string (when (string-match "^[ \t\n]*" query)
+  (setq string (when (string-match "[ \t\n]+$" string)
 		 (replace-match "" nil nil string)))
   string)
+
+(defun lax-plist-update (source destination)
+  "Update destination plist with content of source list."
+  (while source
+    (let ((key (car source))
+	  (value (car (cdr source))))
+      (lax-plist-put destination key value)
+      (setq source (cddr source))))
+  destination)
