@@ -10,14 +10,23 @@ This module allows you to define injection files in a Test Tool Server fashion. 
 No documentation... Just check the file 'example.el'.
 It gives a pretty complete overview of the whole thing.
 
-It is probably better if you know 'some' elisp. YOu don't have to, though.
+It is probably better if you know 'some' elisp. You don't have to, though.
 
 Installing
 ==========
 
+You'll need emacs 24.x.
+(Could also work with emacs 23.x but it has not been tested.)
+
 Copy 'ttemacs.el' in your load-path and you're done for the install.
 
-Then, you probably want to check 'example.el' to have an example to start with. Eval the buffer of 'example.el' in Emacs (M-x eval-buffer) and you'll see the output in a new buffer.
+Then, you probably want to check 'example.el' to have an example to start with:
+
+ * start a Test Tool Server in mode echo (the scenario is completely empty) on 127.0.0.1:40000 in ERPLv2
+
+ * eval the buffer of 'example.el' in Emacs (M-x eval-buffer)
+
+The output should come in a new buffer.
 
 Test?
 =====
