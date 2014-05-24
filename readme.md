@@ -1,16 +1,18 @@
 Description
 ===========
 
-I can only admit this toy project is a little geeky...
+Have ever dreamt of injecting Interactive EDIFACT (IEDI) messages right from Emacs?
+Here is a way to do that.
 
-Anyway, if you have ever dreamt of playing EDIFACT injection files right from Emacs, this is for you!
-
-This module allows you to define injection files in a Test Tool Server fashion. (Not exactly the same syntax, though. We are here in a Lisp world).
+This module allows you to define injection files using very little elisp.
 
 No documentation... Just check the file 'example.el'.
 It gives a pretty complete overview of the whole thing.
 
-It is probably better if you know 'some' elisp. You don't have to, though.
+It is probably better if you know elisp and Edifact.
+No need to know much, though.
+
+The only supported transport protocol is ERPLv2.
 
 Installing
 ==========
@@ -22,7 +24,7 @@ Copy 'ttemacs.el' in your load-path and you're done for the install.
 
 Then, you probably want to check 'example.el' to have an example to start with:
 
- * start a Test Tool Server in mode echo (the scenario is completely empty) on 127.0.0.1:40000 in ERPLv2
+ * start a Test Tool Server in echo mode (or whatever you have at hand that just echo what is receives on a TCP connection) on 127.0.0.1:40000 (in ERPLv2).
 
  * eval the buffer of 'example.el' in Emacs (M-x eval-buffer)
 
